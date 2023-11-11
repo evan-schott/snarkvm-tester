@@ -1,0 +1,40 @@
+[package]
+name = "snarkvm-tester"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.snarkvm]
+path = "../snarkVM"
+
+[dependencies.console]
+version = "0.15.7"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+incremental = true
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = "thin"
+incremental = true
+debug-assertions = false
+
+[profile.dev]
+opt-level = 3
+lto = "thin"
+incremental = true
+
+[profile.test]
+opt-level = 3
+lto = "thin"
+incremental = true
+debug = true
+debug-assertions = true
+[dependencies]
+num_cpus = "1.16.0"
+regex = "1.10.2"
