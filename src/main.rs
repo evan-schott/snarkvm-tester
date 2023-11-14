@@ -18,18 +18,127 @@ use std::io::Write;
 use regex::Regex;
 
 
-const NUM_TRANSACTIONS: usize = 2341;
+const VERIFY_TX_NUM: usize = 49;
+const CREATE_TX_NUM: usize = 36;
 
 fn main() {
-    //test_finalize_operation_spam().expect("Failed to spam transactions");
-    //dummy_file_system_creation().expect("Failed to create dummy file system")
-    // create_blocks().expect("Failed to create block");
-    // open_blocks_test().expect("Failed to open blocks");
-    spam_finalize_ops().expect("Failed to spam finalize ops");
-    //spam_finalize_ops_parallel().expect("Failed to spam finalize ops");
+    parallel_spam().expect("Failed to spam finalize ops");
+    verify_finalize_ops().expect("Failed to spam finalize ops");
 }
 
-fn spam_finalize_ops() -> io::Result<()> {
+fn parallel_spam() -> io::Result<()> {
+    // Compute parallelization logic
+    let mut handles = Vec::new();
+    let num_cpus = num_cpus::get();
+    let work_per_thread = (CREATE_TX_NUM + num_cpus - 1) / num_cpus; // Round up
+
+    // Check if `./transactions` directory exists
+    let transactions_dir = "./transactions";
+    fs::create_dir_all(transactions_dir)?;
+    let max_number = find_max_transaction_number(transactions_dir)?;
+
+    // Start the timer
+    let start = Instant::now();
+
+    // Spawn threads to split workload
+    for i in 0..num_cpus {
+        let handle = thread::Builder::new()
+            .spawn(move || {
+               parallel_tx_creator(work_per_thread, i)
+            })
+            .unwrap(); // Handle potential errors from thread spawning
+        handles.push(handle);
+    }
+
+    let mut results = Vec::new();
+
+    // Collect the results from each thread
+    for handle in handles {
+        let result = handle.join().unwrap().unwrap();
+
+        results.push(result);
+    }
+
+    let assembled_transaction_list = results.concat();
+
+    for i in 0..assembled_transaction_list.len() {
+        let file_path = format!("{}/transaction_{}", transactions_dir, (i as u32)+ 1 + max_number);
+        let mut file = File::create(&file_path)?;
+        let tx_bytes:Vec<u8> = assembled_transaction_list[i].to_bytes_le().expect("Failed to serialize transaction");
+        file.write(&tx_bytes).expect("Failed to write transaction to file");
+    }
+
+    // Stop the timer
+    let duration = start.elapsed();
+
+    // Print the duration
+    println!("Time elapsed is: {:?}", duration);
+    println!("Time elapsed per transactions is {:?}", duration / (num_cpus * work_per_thread) as u32);
+    println!("Num cpus: {}", num_cpus);
+    println!("Work per thread: {}", work_per_thread);
+
+    Ok(())
+}
+fn parallel_tx_creator(num_jobs: usize, thread_id: usize) -> io::Result<(Vec<Transaction<CurrentNetwork>>)> {
+    // Make sure directory ok
+    let transactions_dir = "./transactions";
+    let rng = &mut TestRng::fixed(6404264900108107703);
+
+    // Initialize the test environment.
+    let crate::test_helpers::TestEnv { ledger, private_key, view_key, .. } = crate::test_helpers::sample_test_env(rng);
+
+    // Read child block from bytes
+    let file_path = format!("{}/block_child", transactions_dir);
+    let mut child_file = File::open(&file_path)?;
+    let child_deploy_transfer_block:Block<CurrentNetwork> = Block::<CurrentNetwork>::read_le(&mut child_file).expect("Failed to read child block from file");
+
+    // Check that the next block is valid.
+    ledger.check_next_block(&child_deploy_transfer_block).unwrap();
+
+    // Add the deployment block to the ledger.
+    ledger.advance_to_next_block(&child_deploy_transfer_block).unwrap();
+
+    // Read parent block from bytes
+    let parent_path = format!("{}/block_parent", transactions_dir);
+    let mut parent_file = File::open(&parent_path)?;
+    let parent_deploy_transfer_block:Block<CurrentNetwork> = Block::<CurrentNetwork>::read_le(&mut parent_file).expect("Failed to read parent block from file");
+
+    // Check that the next block is valid.
+    ledger.check_next_block(&parent_deploy_transfer_block).unwrap();
+
+    // Add the deployment block to the ledger.
+    ledger.advance_to_next_block(&parent_deploy_transfer_block).unwrap();
+
+    // Read grandfather block from bytes
+    let grandfather_path = format!("{}/block_grandfather", transactions_dir);
+    let mut grandfather_file = File::open(&grandfather_path)?;
+    let grandfather_deploy_transfer_block:Block<CurrentNetwork> = Block::<CurrentNetwork>::read_le(&mut grandfather_file).expect("Failed to read grandfather block from file");
+
+    // Check that the next block is valid.
+    ledger.check_next_block(&grandfather_deploy_transfer_block).unwrap();
+
+    // Add the deployment block to the ledger.
+    ledger.advance_to_next_block(&grandfather_deploy_transfer_block).unwrap();
+
+    // Complete threads portion of workload
+    let mut grandfather_execute_transactions: Vec<Transaction<CurrentNetwork>> = Vec::new();
+    for i in 0..num_jobs {
+        let r = &mut TestRng::default();
+        let execute_inputs: Vec<Value<CurrentNetwork>> = Vec::new();
+        let new_tx = ledger.vm().execute(&private_key, ("grandfather_spammer.aleo", "outer_most_call"), execute_inputs.into_iter(), None, 0, None, r)
+            .unwrap();
+        grandfather_execute_transactions.push(new_tx);
+
+        // Print out progress
+        println!("------------------------------------------------------------------");
+        println!("Thread: {} has completed {}/{} tasks!", thread_id, i + 1, num_jobs);
+        println!("------------------------------------------------------------------");
+    }
+
+    Ok(grandfather_execute_transactions)
+}
+
+fn verify_finalize_ops() -> io::Result<()> {
     // Make sure directory ok
     let transactions_dir = "./transactions";
     fs::create_dir_all(transactions_dir)?;
@@ -89,7 +198,7 @@ fn spam_finalize_ops() -> io::Result<()> {
 
     // Spawn threads to split workload
     let mut grandfather_execute_transactions = Vec::new();
-    for i in 0..NUM_TRANSACTIONS {
+    for i in 0..VERIFY_TX_NUM {
         let file_path = format!("{}/transaction_{}", transactions_dir, i);
 
         if Path::new(&file_path).exists() {
@@ -118,7 +227,7 @@ fn spam_finalize_ops() -> io::Result<()> {
         println!("------------------------------------------------------------------");
         println!("------------------------------------------------------------------");
         println!("------------------------------------------------------------------");
-        println!("{}/{} completed!", i, NUM_TRANSACTIONS);
+        println!("{}/{} completed!", i, VERIFY_TX_NUM);
         println!("------------------------------------------------------------------");
         println!("------------------------------------------------------------------");
         println!("------------------------------------------------------------------");
@@ -141,7 +250,7 @@ fn spam_finalize_ops() -> io::Result<()> {
 
     // Print the duration
     println!("Time elapsed is: {:?}", duration);
-    println!("Time elapsed per transactions is {:?}", duration / NUM_TRANSACTIONS as u32);
+    println!("Time elapsed per transactions is {:?}", duration / VERIFY_TX_NUM as u32);
 
     Ok(())
 }
@@ -224,8 +333,7 @@ fn spam_finalize_ops_parallel() -> io::Result<()> {
     // Compute parallelization logic
     let mut handles = Vec::new();
     let num_cpus = num_cpus::get();
-    let work_per_thread = (NUM_TRANSACTIONS + num_cpus - 1) / num_cpus; // Round up
-
+    let work_per_thread = (VERIFY_TX_NUM + num_cpus - 1) / num_cpus; // Round up
 
     // Check if `./transactions` directory exists
     let transactions_dir = "./transactions";
@@ -483,7 +591,7 @@ fn dummy_file_system_creation() -> io::Result<()> {
     // Determine the highest number file
     let max_number = find_max_transaction_number(transactions_dir)?;
 
-    for i in 0..NUM_TRANSACTIONS {
+    for i in 0..VERIFY_TX_NUM {
         let file_path = format!("{}/transaction_{}", transactions_dir, max_number + 1 + (i as u32));
 
         if Path::new(&file_path).exists() {
