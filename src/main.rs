@@ -18,12 +18,12 @@ use std::io::Write;
 use regex::Regex;
 
 
-const VERIFY_TX_NUM: usize = 49;
-const CREATE_TX_NUM: usize = 36;
+const VERIFY_TX_NUM: usize = 169;
+const CREATE_TX_NUM: usize = 40;
 
 fn main() {
     parallel_spam().expect("Failed to spam finalize ops");
-    verify_finalize_ops().expect("Failed to spam finalize ops");
+    //verify_finalize_ops().expect("Failed to spam finalize ops");
 }
 
 fn parallel_spam() -> io::Result<()> {
